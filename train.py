@@ -14,9 +14,12 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 
-def train(cfg):
+def train(config):
     # Get wandb setup
-    run = wandb.init(project="fydp-money-classification", config=cfg, entity="methier")
+    run = wandb.init(project="fydp-money-classification", config=config, entity="methier")
+    
+    # Access all hyperparameter values through wandb.config for sweep
+    cfg = wandb.config
 
     # Prep checkpoint directory in repo folder
     repo_dir = Path(__file__).resolve().parent
@@ -71,7 +74,7 @@ def train(cfg):
     )
 
     # Init model
-    num_classes = 4
+    num_classes = len(CLASS_MAP)
     model = torchvision.models.resnet18(pretrained=True)
     model.fc = torch.nn.Linear(512, num_classes)
     model = model.to(device)
@@ -152,7 +155,8 @@ def train(cfg):
         
 if __name__=="__main__":
     cfg = {
-        'root_path': '/home/martin/projects/fydp/Money_Classification',
+        'root_path': '/home/martin/datasets/Money_Classification',
+        'dataset_version': 2,
         'epochs': 40,
         'batch_size': 32,
         'num_workers': 8,
@@ -160,6 +164,5 @@ if __name__=="__main__":
         'lr': 1.5e-4,
         'weight_decay': 1e-4,
         'input_size': 256
-
     }
     train(cfg)
