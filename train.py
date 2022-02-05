@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 import numpy as np
 from tqdm import tqdm
@@ -36,9 +37,10 @@ def train(config):
     # Image size is 
     input_size = (cfg['input_size'], cfg['input_size'])
     train_transforms = tf.Compose([
-        tf.RandomRotation(degrees=180),
-        tf.RandomResizedCrop(input_size),
-        tf.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+        tf.RandomRotation(degrees=180, interpolation=tf.InterpolationMode.BILINEAR),
+        tf.RandomResizedCrop(input_size, scale=(0.6, 1.0)),
+        tf.GaussianBlur(kernel_size=(3, 5), sigma=(0.1, 1.5)),
+        tf.ColorJitter(brightness=0.6, contrast=0.5, saturation=0.6, hue=0.05),
         tf.ToTensor(),
         tf.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
@@ -75,8 +77,18 @@ def train(config):
 
     # Init model
     num_classes = len(CLASS_MAP)
-    model = torchvision.models.resnet18(pretrained=True)
-    model.fc = torch.nn.Linear(512, num_classes)
+    model = getattr(torchvision.models, cfg['model_name'])(pretrained=True)
+    model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+
+    # Freeze num_frozen layers
+    if cfg['num_frozen'] > 0:
+        for idx, child in enumerate(model.children()):
+            # There are 4 blocks before the layers start
+            if idx >= 4 + cfg['num_frozen']:
+                break
+            for param in child.parameters():
+                param.requires_grad = False
+
     model = model.to(device)
     
     # Init optimizer, loss, and LR scheduler
@@ -84,8 +96,7 @@ def train(config):
     criterion = torch.nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg['lr'], steps_per_epoch=len(train_loader), epochs=cfg['epochs'])
 
-    best_acc = 0.0
-    wandb.define_metric("val_acc", summary="max")
+    best_acc = -1.0
     
     for epoch in range(cfg['epochs']):
         # Training loop
@@ -139,30 +150,42 @@ def train(config):
         labels_all = torch.cat(labels_all).detach().cpu().numpy()
 
         val_acc = val_correct / len(val_set) * 100.0
+        # Save model if better than current best
+        if val_acc > best_acc:
+            best_acc = val_acc
+            wandb.run.summary["best_acc"] = best_acc
+            torch.save(model.state_dict(), checkpoint_dir / f"{run.name}_best_model.pt")
+
+            # Only log confusion matrix for best epoch since you can't look at history
+            wandb.log({'conf_mat': wandb.plot.confusion_matrix(probs=None, y_true=labels_all, preds=preds_all, class_names=CLASS_MAP)}, commit=False)
+
         wandb.log({
             'train_loss': running_train_loss / len(train_loader),
             'val_loss': running_val_loss / len(val_loader),
             'train_acc': train_correct / len(train_set) * 100.0,
             'val_acc': val_acc,
-            'conf_mat': wandb.plot.confusion_matrix(probs=None, y_true=labels_all, preds=preds_all, class_names=CLASS_MAP)
+            'lr': scheduler.get_last_lr()[0]
         })
-
-        # Save model if better than current best
-        if val_acc > best_acc:
-            best_acc = val_acc
-            torch.save(model.state_dict(), checkpoint_dir / f"{run.name}_best_model.pt")
-
-        
+   
 if __name__=="__main__":
+    # Only use command line args with sweeps
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--lr', type=float, default=6e-4, help='max learning rate')
+    parser.add_argument('--weight_decay', type=float, default=3e-3, help='weight_decay')
+    parser.add_argument('--num_frozen', type=int, default=3, help='number of conv layers to freeze')
+    args = parser.parse_args()
+
     cfg = {
         'root_path': '/home/martin/datasets/Money_Classification',
-        'dataset_version': 2,
-        'epochs': 40,
-        'batch_size': 32,
-        'num_workers': 8,
-        'val_ratio': 0.4,
-        'lr': 1.5e-4,
-        'weight_decay': 1e-4,
-        'input_size': 256
+        'dataset_version': 3, # Current dataset size is 623
+        'epochs': 30,
+        'batch_size': 64, # chosen to give 7 roughly equal sized training batches
+        'num_workers': 12,
+        'val_ratio': 0.3,
+        'lr': args.lr,
+        'weight_decay': args.weight_decay,
+        'input_size': 384,
+        'num_frozen': args.num_frozen,
+        'model_name': 'resnet50'
     }
     train(cfg)

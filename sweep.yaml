@@ -1,0 +1,24 @@
+project: fydp-money-classification
+entity: methier
+name: ds-v3_lr-decay-nfroz_70-30-split_resnet50
+program: train.py
+method: bayes
+metric:
+  name: best_acc
+  goal: maximize
+parameters:
+  lr:
+    distribution: log_uniform
+    min: -11.5129 # 1e-5
+    max: -4.60517 # 1e-2
+  weight_decay:
+    distribution: log_uniform
+    min: -13.8155 # 1e-6 
+    max: -4.60517 # 1e-2
+  num_frozen:
+    values:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
