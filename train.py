@@ -6,10 +6,12 @@ from tqdm import tqdm
 import torch
 import torchvision
 from torchvision import transforms as tf
+import timm
 import wandb
 
-from dataset import MoneyDataset
+from dataset import MoneyDataset, balanced_split
 from constants import CLASS_MAP
+
 
 np.random.seed(0)
 torch.manual_seed(0)
@@ -38,9 +40,9 @@ def train(config):
     input_size = (cfg['input_size'], cfg['input_size'])
     train_transforms = tf.Compose([
         tf.RandomRotation(degrees=180, interpolation=tf.InterpolationMode.BILINEAR),
-        tf.RandomResizedCrop(input_size, scale=(0.6, 1.0)),
+        tf.RandomResizedCrop(input_size, scale=(0.5, 0.9)),
         tf.GaussianBlur(kernel_size=(3, 5), sigma=(0.1, 1.5)),
-        tf.ColorJitter(brightness=0.6, contrast=0.5, saturation=0.6, hue=0.05),
+        tf.ColorJitter(brightness=0.7, contrast=0.6, saturation=0.7, hue=0.05),
         tf.ToTensor(),
         tf.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
@@ -50,18 +52,13 @@ def train(config):
         tf.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
     
-    # Get indices for train/val split
+    # Get file lists for train/val split
     root_path = Path(cfg['root_path'])
-    ds_size = len(list(root_path.glob('*/*')))
-    idx = np.arange(ds_size)
-    np.random.shuffle(idx)
-    split_idx = int(ds_size * cfg['val_ratio'])
-    val_idx = idx[:split_idx]
-    train_idx = idx[split_idx:]
+    train_list, val_list = balanced_split(root_path, cfg['val_ratio'], CLASS_MAP)
     
     # Create datasets and data loaders
-    train_set = MoneyDataset(root_path, train_idx, train_transforms, CLASS_MAP)
-    val_set = MoneyDataset(root_path, val_idx, val_transforms, CLASS_MAP)
+    train_set = MoneyDataset(root_path, train_list, train_transforms, CLASS_MAP)
+    val_set = MoneyDataset(root_path, val_list, val_transforms, CLASS_MAP)
     train_loader = torch.utils.data.DataLoader(
         train_set,
         batch_size=cfg['batch_size'],
@@ -75,19 +72,38 @@ def train(config):
         num_workers=cfg['num_workers']
     )
 
-    # Init model
-    num_classes = len(CLASS_MAP)
-    model = getattr(torchvision.models, cfg['model_name'])(pretrained=True)
-    model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    if cfg['model_library'] == 'torchvision':
+        # Init model
+        model = getattr(torchvision.models, cfg['model_name'])(pretrained=True)
+        model.fc = torch.nn.Linear(model.fc.in_features, len(CLASS_MAP))
 
-    # Freeze num_frozen layers
-    if cfg['num_frozen'] > 0:
-        for idx, child in enumerate(model.children()):
-            # There are 4 blocks before the layers start
-            if idx >= 4 + cfg['num_frozen']:
-                break
-            for param in child.parameters():
+        # Freeze num_frozen layers (for resnet)
+        if cfg['num_frozen'] > 0:
+            for idx, child in enumerate(model.children()):
+                # There are 4 blocks before the layers start
+                if idx >= 4 + cfg['num_frozen']:
+                    break
+                for param in child.parameters():
+                    param.requires_grad = False
+
+    elif cfg['model_library'] == 'timm':
+        # Init model
+        model = timm.create_model(cfg['model_name'], pretrained=True, num_classes=len(CLASS_MAP))
+
+        # Freeze num_frozen layers (can freeze up to 6 blocks for efficientnetv2-s)
+        for name, param in model.named_parameters():
+            # Freeze first layer before the blocks
+            if "conv_stem" in name or "bn1" in name:
                 param.requires_grad = False
+            
+            # Freeze num_frozen blocks
+            if "blocks" in name:
+                block_num = int(name[7]) + 1
+                if block_num <= cfg['num_frozen']:
+                    param.requires_grad = False
+
+    else:
+        raise ValueError("Invalid model_library config parameter.")
 
     model = model.to(device)
     
@@ -172,20 +188,21 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--lr', type=float, default=6e-4, help='max learning rate')
     parser.add_argument('--weight_decay', type=float, default=3e-3, help='weight_decay')
-    parser.add_argument('--num_frozen', type=int, default=3, help='number of conv layers to freeze')
+    parser.add_argument('--num_frozen', type=int, default=2, help='number of conv layers to freeze')
     args = parser.parse_args()
 
     cfg = {
         'root_path': '/home/martin/datasets/Money_Classification',
-        'dataset_version': 3, # Current dataset size is 623
-        'epochs': 30,
-        'batch_size': 64, # chosen to give 7 roughly equal sized training batches
+        'dataset_version': 4, # Current dataset size is 535 train and 173 val
+        'epochs': 40,
+        'batch_size': 27, # Max size that fits with nfroz=1
         'num_workers': 12,
-        'val_ratio': 0.3,
+        'val_ratio': 0.25,
         'lr': args.lr,
         'weight_decay': args.weight_decay,
         'input_size': 384,
         'num_frozen': args.num_frozen,
-        'model_name': 'resnet50'
+        'model_name': 'resnet50',
+        'model_library': 'torchvision'
     }
     train(cfg)

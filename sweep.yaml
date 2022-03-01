@@ -1,6 +1,6 @@
 project: fydp-money-classification
 entity: methier
-name: ds-v3_lr-decay-nfroz_70-30-split_resnet50
+name: ds-v4_lr-wdecay-nfroz_75-25-split_resnet50-384
 program: train.py
 method: bayes
 metric:
@@ -13,11 +13,10 @@ parameters:
     max: -4.60517 # 1e-2
   weight_decay:
     distribution: log_uniform
-    min: -13.8155 # 1e-6 
-    max: -4.60517 # 1e-2
+    min: -18.4207 # 1e-8
+    max: -6.908 # 1e-3
   num_frozen:
     values:
-    - 0
     - 1
     - 2
     - 3
