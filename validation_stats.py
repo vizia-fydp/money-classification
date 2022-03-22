@@ -115,7 +115,7 @@ def eval(cfg, checkpoint_name):
 if __name__=="__main__":
     # Only use command line args with sweeps
     parser = argparse.ArgumentParser()
-    parser.add_argument('checkpoint_name', type=str, help='max learning rate')
+    parser.add_argument('checkpoint_name', type=str, help='Path to the checkpoint file.')
     args = parser.parse_args()
 
     cfg = {
