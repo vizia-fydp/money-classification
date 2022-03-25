@@ -34,3 +34,9 @@ A script was also created to analyze the errors made by the model on the validat
 ```
 python validation_stats.py <CHECKPOINT_PATH>
 ```
+
+### Converting to ONNX
+To reduce the size of our inference server libraries and speed up inference, we convert the trained models from PyTorch to ONNX format. To do this conversion, the torch_to_onnx script can be used. To run, ensure the config values in the script match those that were used to train the model (can be found in wandb) and then run the command:
+```
+python torch_to_onnx.py <CHECKPOINT_PATH>
+```
